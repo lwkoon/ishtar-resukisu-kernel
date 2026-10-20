@@ -96,8 +96,10 @@ jobs:
           if [ -f fs/namespace.c.rej ]; then
             grep -q 'linux/susfs_def.h' fs/namespace.c || \
               sed -i 's|^#include <linux/mnt_idmapping.h>|&\n#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif|' fs/namespace.c
-            grep -q 'CL_COPY_MNT_NS' fs/namespace.c || \
-              sed -i 's|^#include <trace/hooks/blk.h>|&\n#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\nextern bool susfs_is_current_ksu_domain(void);\nextern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\n#define CL_COPY_MNT_NS BIT(25)\n#endif|' fs/namespace.c
+            # Guard on the DECLARATION line, not the body usage (CL_COPY_MNT_NS
+            # appears in the patch body too). Anchor on the always-present internal.h.
+            grep -q 'extern bool susfs_is_current_ksu_domain' fs/namespace.c || \
+              sed -i 's|^#include "internal.h"|&\n#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\nextern bool susfs_is_current_ksu_domain(void);\nextern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\n#define CL_COPY_MNT_NS BIT(25) /* used by copy_mnt_ns() */\n#endif|' fs/namespace.c
             rm -f fs/namespace.c.rej
           fi
           find . -name '*.rej' | sort > /tmp/rej-after
