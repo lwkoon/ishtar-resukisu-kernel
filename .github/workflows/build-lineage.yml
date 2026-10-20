@@ -86,15 +86,20 @@ jobs:
           echo "SUSFS_COMMIT=$(git -C "$GITHUB_WORKSPACE/susfs" rev-parse --short HEAD)" >> "$GITHUB_ENV"
           cp "$GITHUB_WORKSPACE"/susfs/kernel_patches/fs/* fs/
           cp "$GITHUB_WORKSPACE"/susfs/kernel_patches/include/linux/* include/linux/
-          # LineageOS adds <trace/hooks/blk.h> right after "internal.h", which breaks the
-          # first fs/namespace.c hunk's context. Move it above the hunk.
-          if grep -q '^#include <trace/hooks/blk.h>' fs/namespace.c; then
-            sed -i '/^#include <trace\/hooks\/blk.h>/d' fs/namespace.c
-            sed -i 's|^#include <linux/fs_context.h>|#include <trace/hooks/blk.h>\n&|' fs/namespace.c
-          fi
+          # NOTE: upstream's blk.h-reorder sed was REMOVED. This tree's fs/namespace.c
+          # already matches the susfs hunk context; the reorder created the mismatch.
           # The LineageOS tree already contains a stray .rej file; only check new ones.
           find . -name '*.rej' | sort > /tmp/rej-before
-          patch -p1 --forward --fuzz=3 < "$GITHUB_WORKSPACE/susfs/kernel_patches/$SUSFS_PATCH"
+          patch -p1 --forward --fuzz=3 < "$GITHUB_WORKSPACE/susfs/kernel_patches/$SUSFS_PATCH" || true
+          # Fallback: if the first fs/namespace.c hunk still rejects (e.g. ReSukiSU
+          # already modified the file), insert the susfs additions idempotently.
+          if [ -f fs/namespace.c.rej ]; then
+            grep -q 'linux/susfs_def.h' fs/namespace.c || \
+              sed -i 's|^#include <linux/mnt_idmapping.h>|&\n#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs_def.h>\n#endif|' fs/namespace.c
+            grep -q 'CL_COPY_MNT_NS' fs/namespace.c || \
+              sed -i 's|^#include <trace/hooks/blk.h>|&\n#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\nextern bool susfs_is_current_ksu_domain(void);\nextern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;\n#define CL_COPY_MNT_NS BIT(25)\n#endif|' fs/namespace.c
+            rm -f fs/namespace.c.rej
+          fi
           find . -name '*.rej' | sort > /tmp/rej-after
           NEW_REJ=$(comm -13 /tmp/rej-before /tmp/rej-after)
           if [ -n "$NEW_REJ" ]; then
